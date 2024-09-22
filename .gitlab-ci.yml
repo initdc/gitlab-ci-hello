@@ -1,19 +1,51 @@
+image: initdc/ruby:22.04-3.0
+
 stages:
   - build
   - test
-  - deploy
 
-build-job:
+variables:
+  DEBIAN_FRONTEND: noninteractive
+  TZ: Asia/Shanghai
+  CCACHE_DIR: /home/ubuntu/ccache
+
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+
+build-1:
   stage: build
+  interruptible: true
   script:
-    - echo "Building the 'Hello World' app"
+    - sudo apt-get update && sudo apt-get install -y bash gcc ccache file
+    - export PATH=/usr/lib/ccache:$PATH
+    - ccache -F 0 -M 10GB
+    - which gcc
+    - gcc -v
+    # 
+    - ruby build.rb
+    - ls -la
+  artifacts:
+    paths:
+      - ./hello
+  cache:
+    - key: $CI_JOB_STAGE-gcc-$CI_COMMIT_SHORT_SHA
+      fallback_keys: 
+        - $CI_JOB_STAGE-gcc-
+      paths:
+        - /home/ubuntu/ccache
+      policy: pull-push
 
-test-job:
+build-run:
+  stage: build
+  needs: ["build-1"]
+  script:
+    - ls -la
+    - ./hello
+
+test-1:
   stage: test
+  needs: ["build-1"]
   script:
-    - echo "Testing the 'Hello World' app"
-
-deploy-job:
-  stage: deploy
-  script:
-    - echo "Deploying the 'Hello World' app"
+    - ls -la
+    - ruby test.rb

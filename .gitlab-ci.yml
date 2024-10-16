@@ -3,49 +3,85 @@ image: initdc/ruby:22.04-3.0
 stages:
   - build
   - test
+  - upload
+  - release
 
 variables:
   DEBIAN_FRONTEND: noninteractive
   TZ: Asia/Shanghai
   CCACHE_DIR: /home/ubuntu/ccache
+  PACKAGE_REGISTRY_URL: $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/initdc-$CI_PROJECT_NAME
 
 workflow:
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == 'dev'
+    - if: $CI_COMMIT_BRANCH == 'next'
   auto_cancel:
     on_new_commit: interruptible
 
-build-1:
+build-job:
   stage: build
   interruptible: true
   script:
+    - echo "$USER@$NAME > $PWD"
+    - env
     - sudo apt-get update && sudo apt-get install -y bash gcc ccache file
     - export PATH=/usr/lib/ccache:$PATH
     - ccache -F 0 -M 10GB
     - which gcc
     - gcc -v
-    # 
+    #
     - ruby build.rb
     - ls -la
   artifacts:
+    when: on_success
     paths:
-      - ./hello
+      - hello
   cache:
     - key: $CI_JOB_STAGE-gcc-$CI_COMMIT_SHORT_SHA
-      fallback_keys: 
+      fallback_keys:
         - $CI_JOB_STAGE-gcc-
       paths:
         - /home/ubuntu/ccache
       policy: pull-push
 
-build-run:
-  stage: build
-  needs: ["build-1"]
-  script:
-    - ls -la
-    - ./hello
-
-test-1:
+test-job:
   stage: test
-  needs: ["build-1"]
+  needs:
+    - build-job
   script:
     - ls -la
     - ruby test.rb
+
+upload-job:
+  stage: upload
+  image: curlimages/curl:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  needs:
+    - build-job
+  script:
+    - |
+      curl --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file hello "$PACKAGE_REGISTRY_URL/$CI_COMMIT_TAG/hello-linux-amd64"
+
+release-job:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - build-job
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - echo "Running the release job."
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: Release $CI_COMMIT_TAG
+    description: Release created using the release-cli.
+    assets:
+      links:
+        - name: hello-linux-amd64
+          url: $PACKAGE_REGISTRY_URL/$CI_COMMIT_TAG/hello-linux-amd64
+          direct_asset_path: $PWD/hello
